@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "极简选区扫码",
-  "version": "1.0.2",
+  "version": "1.2.0",
   "description": "通过局部选区精准识别网页二维码，支持长图识别与自动复制。",
   "icons": {
     "16": "icons/icon16.png",
@@ -12,11 +12,7 @@
   "permissions": ["offscreen", "notifications", "activeTab", "scripting", "clipboardWrite"],
   "host_permissions": ["<all_urls>"],
   "action": {
-    "default_title": "点击开始选区扫码",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "32": "icons/icon32.png"
-    }
+    "default_title": "点击开始选区扫码"
   },
   "background": {
     "service_worker": "background.js"

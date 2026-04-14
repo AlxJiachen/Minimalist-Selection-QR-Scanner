@@ -1,17 +1,11 @@
-// content.js
 (function() {
-  // 强制移除旧的蒙层（如果存在），防止状态死锁
   const oldOverlay = document.getElementById('qr-scanner-overlay');
   if (oldOverlay) oldOverlay.remove();
 
   const cleanup = () => {
     const overlay = document.getElementById('qr-scanner-overlay');
     if (overlay) overlay.remove();
-    document.removeEventListener('keydown', handleKeyDown);
   };
-
-  const handleKeyDown = (e) => { if (e.key === 'Escape') cleanup(); };
-  document.addEventListener('keydown', handleKeyDown);
 
   const overlay = document.createElement('div');
   overlay.id = 'qr-scanner-overlay';
@@ -31,8 +25,7 @@
 
   overlay.onmousedown = (e) => {
     isDrawing = true;
-    startX = e.clientX; 
-    startY = e.clientY;
+    startX = e.clientX; startY = e.clientY;
   };
 
   overlay.onmousemove = (e) => {
@@ -45,8 +38,7 @@
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.strokeStyle = '#00FF00'; 
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#00FF00'; ctx.lineWidth = 2;
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
   };
 
@@ -73,11 +65,4 @@
     }
     cleanup();
   };
-
-  // 接收并打印 Debug 图像
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'debug-log-to-page') {
-      console.log("QR_DEBUG_IMAGE:", msg.url);
-    }
-  });
 })();

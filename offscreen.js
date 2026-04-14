@@ -1,84 +1,105 @@
-
+// offscreen.js (v3.0.9)
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'decode-v5-request') processImage(message.payload);
+  if (message.type === 'decode-request-v3') processImageRobust(message.payload);
 });
 
-
-async function processImage(p) {
-  console.log("1. 接收到的原始数据:", p);
+async function processImageRobust(p) {
   const img = new Image();
   img.crossOrigin = "anonymous";
-  
   img.onload = async () => {
     try {
-      // 自检 A: 图片原始尺寸
-      console.log(`2. 图片载入成功: ${img.naturalWidth}x${img.naturalHeight}`);
-      if (img.naturalWidth === 0) throw new Error("图片宽度为0，可能跨域受限");
-
       const scale = 3;
-      const padding = 40;
-      
+      const padding = 60;
       const realW = p.relW * img.naturalWidth;
       const realH = p.relH * img.naturalHeight;
       const realX = p.relX * img.naturalWidth;
       const realY = p.relY * img.naturalHeight;
-
-      // 自检 B: 计算出的绝对坐标
-      console.log(`3. 裁剪坐标自检: x=${realX.toFixed(1)}, y=${realY.toFixed(1)}, w=${realW.toFixed(1)}, h=${realH.toFixed(1)}`);
 
       const canvas = document.createElement('canvas');
       canvas.width = Math.floor(realW * scale + padding * 2);
       canvas.height = Math.floor(realH * scale + padding * 2);
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       
-      // 涂白底
+      const debugData = {}; // 用于存放所有步骤的完整源码
+
+      // 1. 原图
       ctx.fillStyle = "white";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // 绘制原图
       ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(
-        img, 
-        realX, realY, realW, realH, 
-        padding, padding, realW * scale, realH * scale
-      );
+      ctx.drawImage(img, realX, realY, realW, realH, padding, padding, realW * scale, realH * scale);
+      debugData.step1_raw = canvas.toDataURL("image/png");
 
-      // --- 【关键调试点 1：看看没经过算法处理的原始裁剪图是不是白的】 ---
-      const rawUrl = canvas.toDataURL();
-      chrome.runtime.sendMessage({ type: 'debug-log-relay', url: "RAW_CROP: " + rawUrl });
+      let result = null, winner = "none";
 
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const processed = adaptiveThreshold(imageData, 0.1);
-      ctx.putImageData(processed, 0, 0);
-
-      // --- 【关键调试点 2：算法处理后的图】 ---
-      const finalUrl = canvas.toDataURL();
-      chrome.runtime.sendMessage({ type: 'debug-log-relay', url: "PROCESSED: " + finalUrl });
-
-      let code = jsQR(processed.data, processed.width, processed.height);
-      if (!code) {
-        const inv = invert(processed);
-        ctx.putImageData(inv, 0, 0);
-        code = jsQR(inv.data, inv.width, inv.height);
+      if ('BarcodeDetector' in window) {
+        try {
+          const detector = new BarcodeDetector({ formats: ['qr_code'] });
+          const barcodes = await detector.detect(canvas);
+          if (barcodes.length > 0) { result = barcodes[0].rawValue; winner = "Native API"; }
+        } catch (e) {}
       }
 
-      if (code) {
-        copy(code.data);
-        chrome.runtime.sendMessage({ type: 'decode-qr-result', success: true, result: code.data });
-      } else {
-        chrome.runtime.sendMessage({ type: 'decode-qr-result', success: false });
+      if (!result) {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        
+        // 2. T=0.10
+        const t10 = adaptiveThreshold(imageData, 0.10);
+        ctx.putImageData(t10, 0, 0);
+        debugData.step2_t10 = canvas.toDataURL("image/png");
+        let code = jsQR(t10.data, t10.width, t10.height);
+        if (code) { result = code.data; winner = "jsQR (T=0.10)"; }
+
+        if (!result) {
+          // 3. T=0.16
+          const t16 = adaptiveThreshold(imageData, 0.16);
+          ctx.putImageData(t16, 0, 0);
+          debugData.step3_t16 = canvas.toDataURL("image/png");
+          code = jsQR(t16.data, t16.width, t16.height);
+          if (code) { result = code.data; winner = "jsQR (T=0.16)"; }
+        }
+
+        if (!result) {
+          // 4. 反色
+          const inv = invert(adaptiveThreshold(imageData, 0.12));
+          ctx.putImageData(inv, 0, 0);
+          debugData.step4_inv = canvas.toDataURL("image/png");
+          code = jsQR(inv.data, inv.width, inv.height);
+          if (code) { result = code.data; winner = "jsQR (Inverted)"; }
+        }
       }
+
+      // --- 重点：调试信息输出 ---
+      console.groupCollapsed(`%c🔍 扫码全路径诊断 | 最终结果: ${result ? '✅' : '❌'} | 引擎: ${winner}`, 
+        `color: white; background: ${result ? '#2ecc71' : '#e74c3c'}; padding: 3px 10px; border-radius: 4px; font-weight: bold;`);
+      
+      // 遍历四种图，输出预览和“下载链接”
+      Object.keys(debugData).forEach(key => {
+        const url = debugData[key];
+        const w = 120, h = (canvas.height / canvas.width) * w;
+        
+        console.log(`%c${key}`, "font-weight: bold; color: #34495e;");
+        // 打印缩略图预览
+        console.log("%c ", `font-size: 1px; padding: ${h/2}px ${w/2}px; background: url(${url}) no-repeat; background-size: contain; line-height: ${h}px; border: 1px solid #eee; margin: 5px 0;`);
+        // 打印下载链接（这比复制源码更Nice，你可以直接存成文件传给我）
+        console.log(`%c📥 下载此图: %c[右键点击保存]`, "color: #666;", `color: #007bff; text-decoration: underline; cursor: pointer;`);
+        console.log(url); // 虽然这里会被截断，但下方有不截断的
+      });
+
+      console.log("%c💡 技巧：下方 Object 展开后，右键点击属性选 'Copy string contents' 可复制完整源码（不被截断）", "color: #999; font-style: italic;");
+      console.dir(debugData); // 关键：用 dir 输出对象，里面的字符串不会被截断
+      
+      console.groupEnd();
+
+      if (result) copyToClipboard(result);
+      chrome.runtime.sendMessage({ type: 'decode-qr-result', success: !!result, result: result || "", engine: winner });
     } catch (e) {
-      console.error("解码中断:", e);
       chrome.runtime.sendMessage({ type: 'decode-qr-result', success: false });
     }
   };
-
-  img.onerror = () => console.error("图片加载失败，URL 可能无效:", p.imgSrc);
   img.src = p.imgSrc;
 }
 
+// 辅助函数保持原样...
 function adaptiveThreshold(id, T) {
   const { width: w, height: h, data: d } = id;
   const gray = new Uint8Array(w * h);
@@ -96,8 +117,8 @@ function adaptiveThreshold(id, T) {
   const S = Math.floor(w / 8);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const x1 = Math.max(1, x-S/2), x2 = Math.min(w, x+S/2);
-      const y1 = Math.max(1, y-S/2), y2 = Math.min(h, y+S/2);
+      const x1 = Math.max(1, x-S/2|0), x2 = Math.min(w, x+S/2|0);
+      const y1 = Math.max(1, y-S/2|0), y2 = Math.min(h, y+S/2|0);
       const count = (x2 - x1) * (y2 - y1);
       const sum = int[y2*(w+1)+x2] - int[(y1-1)*(w+1)+x2] - int[y2*(w+1)+(x1-1)] + int[(y1-1)*(w+1)+(x1-1)];
       const res = (gray[y * w + x] * count < sum * (1.0 - T)) ? 0 : 255;
@@ -107,15 +128,15 @@ function adaptiveThreshold(id, T) {
   }
   return new ImageData(out, w, h);
 }
-
 function invert(id) {
   for (let i = 0; i < id.data.length; i += 4) {
-    id.data[i] = id.data[i+1] = id.data[i+2] = 255 - id.data[i];
+    id.data[i] = 255 - id.data[i];
+    id.data[i+1] = 255 - id.data[i+1];
+    id.data[i+2] = 255 - id.data[i+2];
   }
   return id;
 }
-
-function copy(t) {
+function copyToClipboard(t) {
   const el = document.createElement("textarea");
   el.value = t; document.body.appendChild(el);
   el.select(); document.execCommand('copy');
