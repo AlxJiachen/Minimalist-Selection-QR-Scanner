@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "极简选区扫码",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "通过局部选区精准识别网页二维码，支持长图识别与自动复制。",
   "icons": {
     "16": "icons/icon16.png",
